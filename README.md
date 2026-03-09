@@ -14,7 +14,7 @@ Click a server to connect, switch between them on the fly. Turn on auto-connect 
 - **Desktop notifications** — get notified on connect, disconnect, and connection drops
 - **Smart detection** — distinguishes between connected, stale, no-network, and disconnected states
 - **Hot-reload configs** — drop in or remove `.conf` files and the menu updates automatically
-- **Clean server names** — `wg-nl-93.conf` shows up as "NL", not the raw filename
+- **Clean server names** — `wg-us-42.conf` shows up as "US", not the raw filename
 
 ## Requirements
 
@@ -43,9 +43,9 @@ Drop `.conf` files into the `configs/` folder:
 
 ```
 configs/
-  wg-nl-93.conf    → shows as "NL"
   wg-us-42.conf    → shows as "US"
-  wg-gr-07.conf    → shows as "GR"
+  wg-de-15.conf    → shows as "DE"
+  wg-jp-03.conf    → shows as "JP"
 ```
 
 The `wg` prefix and trailing numbers are stripped automatically. You can add or remove configs at any time — the menu picks up changes within a few seconds.
