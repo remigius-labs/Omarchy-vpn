@@ -13,7 +13,8 @@ Drop in your WireGuard configs, click to connect. Tested with ProtonVPN — shou
 - System tray icon — full shield when connected, empty shield when not
 - Auto-detects servers from your `configs/` folder — no hardcoded lists
 - Click any server to connect, switch between them on the fly
-- Auto-connect on startup — set it once, forget it
+- **Fastest server** — pings all endpoints, connects to the lowest latency one
+- Auto-connect on startup — simple on/off toggle, reconnects to your last used server
 - Desktop notifications on connect/disconnect
 - Detects stale connections and network drops independently
 
@@ -72,7 +73,8 @@ To start it with Omarchy, add it to your autostart.
 Click the tray icon to open the menu:
 
 - **Server list** — click any server to connect. Active server is marked ✓
-- **Auto-connect** — click to cycle through your servers (or Off). Saved to `prefs.json`, connects automatically on next startup
+- **Fastest server** — pings all your servers, connects to the one with the lowest latency
+- **Auto-connect** — on/off toggle. When on, reconnects to your last used server on startup
 - **Disconnect** — tears down the active tunnel
 - **Open configs folder** — opens your `configs/` directory to add/remove configs
 
