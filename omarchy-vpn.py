@@ -71,6 +71,47 @@ def can_reach_endpoint(endpoint):
         return False
 
 
+def get_endpoint(conf):
+    """Extract endpoint IP from a WireGuard config file."""
+    for line in conf.read_text().splitlines():
+        line = line.strip()
+        if line.lower().startswith("endpoint"):
+            addr = line.split("=", 1)[1].strip()
+            return addr.rsplit(":", 1)[0]  # strip port
+    return None
+
+
+def ping_latency(host, timeout=2):
+    """Return latency in ms to host, or None on failure."""
+    try:
+        r = subprocess.run(
+            ["ping", "-c", "1", "-W", str(timeout), host],
+            capture_output=True, text=True, timeout=timeout + 1
+        )
+        if r.returncode == 0:
+            m = re.search(r'time[=<]([\d.]+)', r.stdout)
+            if m:
+                return float(m.group(1))
+    except Exception:
+        pass
+    return None
+
+
+def find_fastest(configs):
+    """Ping all config endpoints, return the config with lowest latency."""
+    results = []
+    for conf in configs:
+        host = get_endpoint(conf)
+        if host:
+            ms = ping_latency(host)
+            if ms is not None:
+                results.append((ms, conf))
+    if results:
+        results.sort(key=lambda x: x[0])
+        return results[0][1]
+    return None
+
+
 def get_status():
     """
     Returns (status, iface):
@@ -118,11 +159,12 @@ class OmarchyVPN:
         self.build_menu()
         GLib.timeout_add_seconds(3, self.refresh)
 
-        auto = self.prefs.get("auto_connect")
-        if auto:
-            conf = CONFIG_DIR / f"{auto}.conf"
-            if conf.exists():
-                threading.Thread(target=self._connect, args=(conf,), daemon=True).start()
+        if self.prefs.get("auto_connect_enabled"):
+            last = self.prefs.get("last_server")
+            if last:
+                conf = CONFIG_DIR / f"{last}.conf"
+                if conf.exists():
+                    threading.Thread(target=self._connect, args=(conf,), daemon=True).start()
 
     def notify(self, title, body):
         try:
@@ -138,6 +180,8 @@ class OmarchyVPN:
             run(["sudo", "wg-quick", "down", str(c)], 5)
         run(["sudo", "ip", "link", "delete", conf.stem], 5)
         run(["sudo", "wg-quick", "up", str(conf)], 30)
+        self.prefs["last_server"] = conf.stem
+        save_prefs(self.prefs)
         GLib.idle_add(self.build_menu)
 
     def build_menu(self):
@@ -176,9 +220,15 @@ class OmarchyVPN:
         menu.append(status)
         menu.append(Gtk.SeparatorMenuItem())
 
-        # Config list
+        # Fastest server
         configs = get_configs()
         is_up = state in ('connected', 'stale')
+        fastest = Gtk.MenuItem(label="⚡ Fastest server")
+        fastest.connect("activate", lambda _: self.on_connect_fastest())
+        menu.append(fastest)
+        menu.append(Gtk.SeparatorMenuItem())
+
+        # Config list
         for conf in configs:
             active = is_up and iface == conf.stem
             mark = ("✓ " if state == 'connected' else "⚠ ") if active else "   "
@@ -193,11 +243,20 @@ class OmarchyVPN:
 
         menu.append(Gtk.SeparatorMenuItem())
 
-        # Auto-connect
-        auto = self.prefs.get("auto_connect")
-        auto_label = display_name(auto) if auto else "Off"
-        auto_item = Gtk.MenuItem(label=f"Auto-connect: {auto_label}")
-        auto_item.connect("activate", self.on_cycle_auto)
+        # Auto-connect toggle
+        auto_on = self.prefs.get("auto_connect_enabled", False)
+        last = self.prefs.get("last_server")
+        if auto_on and last:
+            auto_label = f"Auto-connect: {display_name(last)}"
+        elif auto_on:
+            auto_label = "Auto-connect: On (no server yet)"
+        else:
+            auto_label = "Auto-connect: Off"
+        auto_item = Gtk.CheckMenuItem(label=auto_label)
+        auto_item.set_active(auto_on)
+        if not last:
+            auto_item.set_sensitive(False)
+        auto_item.connect("toggled", self.on_toggle_auto)
         menu.append(auto_item)
 
         menu.append(Gtk.SeparatorMenuItem())
@@ -225,6 +284,18 @@ class OmarchyVPN:
     def on_connect(self, conf):
         threading.Thread(target=self._connect, args=(conf,), daemon=True).start()
 
+    def on_connect_fastest(self):
+        def do():
+            self.notify("VPN", "Finding fastest server...")
+            conf = find_fastest(get_configs())
+            if conf:
+                self._connect(conf)
+                self.notify("VPN Connected", f"Fastest: {display_name(conf.stem)}")
+            else:
+                self.notify("VPN", "Could not reach any server")
+                GLib.idle_add(self.build_menu)
+        threading.Thread(target=do, daemon=True).start()
+
     def on_disconnect(self, _):
         def do():
             for c in get_configs():
@@ -232,11 +303,8 @@ class OmarchyVPN:
             GLib.idle_add(self.build_menu)
         threading.Thread(target=do, daemon=True).start()
 
-    def on_cycle_auto(self, _):
-        stems = [None] + [c.stem for c in get_configs()]
-        current = self.prefs.get("auto_connect")
-        idx = stems.index(current) if current in stems else 0
-        self.prefs["auto_connect"] = stems[(idx + 1) % len(stems)]
+    def on_toggle_auto(self, item):
+        self.prefs["auto_connect_enabled"] = item.get_active()
         save_prefs(self.prefs)
         self.build_menu()
 
