@@ -37,8 +37,12 @@ def get_configs():
 
 
 def display_name(stem):
-    """Turn a config filename stem into a readable label."""
-    return stem.replace("-", " ").replace("_", " ").title()
+    """Turn a config filename stem into a readable label.
+    Strips 'wg' prefix and trailing numbers, e.g. 'wg-nl-93' -> 'NL'
+    """
+    s = re.sub(r'^[Ww][Gg][-_]?', '', stem)
+    s = re.sub(r'[-_]\d+$', '', s)
+    return s.upper().replace("-", " ").replace("_", " ")
 
 
 def run(cmd, timeout=10):
@@ -154,15 +158,20 @@ class OmarchyVPN:
         )
         self.indicator.set_status(AppIndicator3.IndicatorStatus.ACTIVE)
         self.last_state = None
+        self.state = 'disconnected'
+        self.iface = None
+        self._config_stems = set()
+        self._disconnect_timer = None
         self.prefs = load_prefs()
 
+        self._update_status()
         self.build_menu()
         GLib.timeout_add_seconds(3, self.refresh)
 
         if self.prefs.get("auto_connect_enabled"):
-            last = self.prefs.get("last_server")
-            if last:
-                conf = CONFIG_DIR / f"{last}.conf"
+            pinned = self.prefs.get("auto_connect")
+            if pinned:
+                conf = CONFIG_DIR / f"{pinned}.conf"
                 if conf.exists():
                     threading.Thread(target=self._connect, args=(conf,), daemon=True).start()
 
@@ -175,6 +184,49 @@ class OmarchyVPN:
         except Exception:
             pass
 
+    def _update_status(self):
+        state, iface = get_status()
+        config_stems = {c.stem for c in get_configs()}
+        changed = (state != self.state or iface != self.iface
+                   or config_stems != self._config_stems)
+        self.state = state
+        self.iface = iface
+        self._config_stems = config_stems
+
+        # Notifications on state change
+        if self.last_state is not None and state != self.last_state:
+            if state == 'connected':
+                if self._disconnect_timer:
+                    GLib.source_remove(self._disconnect_timer)
+                    self._disconnect_timer = None
+                self.notify("VPN Connected", display_name(iface))
+            elif state in ('no-network', 'stale'):
+                if self._disconnect_timer:
+                    GLib.source_remove(self._disconnect_timer)
+                    self._disconnect_timer = None
+                self.notify("VPN Down", "Connection lost")
+            elif state == 'disconnected':
+                if not self._disconnect_timer:
+                    self._disconnect_timer = GLib.timeout_add_seconds(
+                        10, self._fire_disconnect_notify)
+        self.last_state = state
+
+        # Icon
+        if state == 'connected':
+            self.indicator.set_icon_full("security-high-symbolic", "Connected")
+            self.indicator.set_title(f"VPN: {display_name(iface)}")
+        elif state == 'no-network':
+            self.indicator.set_icon_full("security-low-symbolic", "No Network")
+            self.indicator.set_title("VPN: No Network")
+        elif state == 'stale':
+            self.indicator.set_icon_full("security-low-symbolic", "Stale")
+            self.indicator.set_title(f"VPN: Stale — {display_name(iface)}")
+        else:
+            self.indicator.set_icon_full("security-low-symbolic", "Disconnected")
+            self.indicator.set_title("VPN: Off")
+
+        return changed
+
     def _connect(self, conf):
         for c in get_configs():
             run(["sudo", "wg-quick", "down", str(c)], 5)
@@ -182,57 +234,38 @@ class OmarchyVPN:
         run(["sudo", "wg-quick", "up", str(conf)], 30)
         self.prefs["last_server"] = conf.stem
         save_prefs(self.prefs)
-        GLib.idle_add(self.build_menu)
+        GLib.idle_add(self._update_and_rebuild)
 
     def build_menu(self):
         menu = Gtk.Menu()
-        state, iface = get_status()
+        state, iface = self.state, self.iface
 
-        # Notifications on state change
-        if self.last_state is not None and state != self.last_state:
-            if state == 'connected':
-                self.notify("VPN Connected", display_name(iface))
-            elif state in ('no-network', 'stale'):
-                self.notify("VPN Down", "Connection lost")
-            elif state == 'disconnected':
-                self.notify("VPN Disconnected", "")
-        self.last_state = state
-
-        # Icon + status label
-        if state == 'connected':
-            self.indicator.set_icon_full("security-high-symbolic", "Connected")
-            self.indicator.set_title(f"VPN: {display_name(iface)}")
-            status = Gtk.MenuItem(label=f"● Connected — {display_name(iface)}")
-        elif state == 'no-network':
-            self.indicator.set_icon_full("security-low-symbolic", "No Network")
-            self.indicator.set_title("VPN: No Network")
-            status = Gtk.MenuItem(label=f"✗ No network — {display_name(iface)}")
-        elif state == 'stale':
-            self.indicator.set_icon_full("security-low-symbolic", "Stale")
-            self.indicator.set_title(f"VPN: Stale — {display_name(iface)}")
-            status = Gtk.MenuItem(label=f"⚠ Stale — {display_name(iface)}")
-        else:
-            self.indicator.set_icon_full("security-low-symbolic", "Disconnected")
-            self.indicator.set_title("VPN: Off")
-            status = Gtk.MenuItem(label="○ Disconnected")
-
-        status.set_sensitive(False)
-        menu.append(status)
-        menu.append(Gtk.SeparatorMenuItem())
-
-        # Fastest server
         configs = get_configs()
         is_up = state in ('connected', 'stale')
-        fastest = Gtk.MenuItem(label="⚡ Fastest server")
-        fastest.connect("activate", lambda _: self.on_connect_fastest())
-        menu.append(fastest)
+
+        # Auto-connect toggle (top)
+        auto_on = self.prefs.get("auto_connect_enabled", False)
+        auto_item = Gtk.CheckMenuItem(label="Auto-connect")
+        auto_item.set_active(auto_on)
+        if not is_up and not auto_on:
+            auto_item.set_sensitive(False)
+        auto_item.connect("toggled", self.on_toggle_auto)
+        menu.append(auto_item)
+
+        # Disconnect
+        disc = Gtk.MenuItem(label="Disconnect")
+        disc.connect("activate", self.on_disconnect)
+        disc.set_sensitive(is_up)
+        menu.append(disc)
         menu.append(Gtk.SeparatorMenuItem())
 
-        # Config list
+        # Config list — clicking active server disconnects
+        pinned = self.prefs.get("auto_connect")
         for conf in configs:
             active = is_up and iface == conf.stem
-            mark = ("✓ " if state == 'connected' else "⚠ ") if active else "   "
-            item = Gtk.MenuItem(label=f"{mark}{display_name(conf.stem)}")
+            mark = ("✓ " if state == 'connected' else "⚠ ") if active else ""
+            suffix = " - Autoconnect" if auto_on and pinned == conf.stem else ""
+            item = Gtk.MenuItem(label=f"{mark}{display_name(conf.stem)}{suffix}")
             item.connect("activate", lambda _, c=conf: self.on_connect(c))
             menu.append(item)
 
@@ -243,33 +276,7 @@ class OmarchyVPN:
 
         menu.append(Gtk.SeparatorMenuItem())
 
-        # Auto-connect toggle
-        auto_on = self.prefs.get("auto_connect_enabled", False)
-        last = self.prefs.get("last_server")
-        if auto_on and last:
-            auto_label = f"Auto-connect: {display_name(last)}"
-        elif auto_on:
-            auto_label = "Auto-connect: On (no server yet)"
-        else:
-            auto_label = "Auto-connect: Off"
-        auto_item = Gtk.CheckMenuItem(label=auto_label)
-        auto_item.set_active(auto_on)
-        if not last:
-            auto_item.set_sensitive(False)
-        auto_item.connect("toggled", self.on_toggle_auto)
-        menu.append(auto_item)
-
-        menu.append(Gtk.SeparatorMenuItem())
-
-        # Disconnect
-        disc = Gtk.MenuItem(label="Disconnect")
-        disc.connect("activate", self.on_disconnect)
-        disc.set_sensitive(is_up)
-        menu.append(disc)
-
-        menu.append(Gtk.SeparatorMenuItem())
-
-        # Open configs folder
+        # Open configs folder (bottom)
         add = Gtk.MenuItem(label="Open configs folder")
         add.connect("activate", lambda _: subprocess.Popen(["xdg-open", str(CONFIG_DIR)], start_new_session=True))
         menu.append(add)
@@ -277,8 +284,19 @@ class OmarchyVPN:
         menu.show_all()
         self.indicator.set_menu(menu)
 
-    def refresh(self):
+    def _fire_disconnect_notify(self):
+        self._disconnect_timer = None
+        if self.last_state == 'disconnected':
+            self.notify("VPN Disconnected", "")
+        return False  # don't repeat
+
+    def _update_and_rebuild(self):
+        self._update_status()
         self.build_menu()
+
+    def refresh(self):
+        if self._update_status():
+            self.build_menu()
         return True
 
     def on_connect(self, conf):
@@ -293,18 +311,20 @@ class OmarchyVPN:
                 self.notify("VPN Connected", f"Fastest: {display_name(conf.stem)}")
             else:
                 self.notify("VPN", "Could not reach any server")
-                GLib.idle_add(self.build_menu)
+                GLib.idle_add(self._update_and_rebuild)
         threading.Thread(target=do, daemon=True).start()
 
     def on_disconnect(self, _):
         def do():
             for c in get_configs():
                 run(["sudo", "wg-quick", "down", str(c)], 5)
-            GLib.idle_add(self.build_menu)
+            GLib.idle_add(self._update_and_rebuild)
         threading.Thread(target=do, daemon=True).start()
 
     def on_toggle_auto(self, item):
         self.prefs["auto_connect_enabled"] = item.get_active()
+        if item.get_active() and self.iface:
+            self.prefs["auto_connect"] = self.iface
         save_prefs(self.prefs)
         self.build_menu()
 
