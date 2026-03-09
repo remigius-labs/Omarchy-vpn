@@ -2,25 +2,23 @@
 
 A WireGuard VPN tray icon built for [Omarchy](https://omarchy.org).
 
-Drop in your WireGuard configs, click to connect. Tested with ProtonVPN — should work with any WireGuard provider (Mullvad, self-hosted, etc.) but not verified.
+Drop your WireGuard configs into the `configs/` folder and manage connections from the system tray. Tested with ProtonVPN — should work with any WireGuard provider (Mullvad, self-hosted, etc.).
 
-> ⚠️ **100% vibe coded.** I did not write a single line of this. It works for me, but use it at your own risk — especially the sudoers setup. Read the code before running it on your machine.
-
----
+Click a server to connect, switch between them on the fly. Turn on auto-connect to automatically reconnect to your pinned server on startup. The tray icon updates in real time — full shield when connected, empty when not — with desktop notifications on state changes.
 
 ## Features
 
-- System tray icon — full shield when connected, empty shield when not
-- Auto-detects servers from your `configs/` folder — no hardcoded lists
-- Click any server to connect, switch between them on the fly
-- **Fastest server** — pings all endpoints, connects to the lowest latency one
-- Auto-connect on startup — simple on/off toggle, reconnects to your last used server
-- Desktop notifications on connect/disconnect
-- Detects stale connections and network drops independently
+- **Click to connect** — pick a server from the menu, switch anytime
+- **Auto-connect** — pin a server and reconnect to it automatically on startup
+- **Live status** — icon and tooltip update every 3 seconds without flickering
+- **Desktop notifications** — get notified on connect, disconnect, and connection drops
+- **Smart detection** — distinguishes between connected, stale, no-network, and disconnected states
+- **Hot-reload configs** — drop in or remove `.conf` files and the menu updates automatically
+- **Clean server names** — `wg-nl-93.conf` shows up as "NL", not the raw filename
 
 ## Requirements
 
-- [Omarchy](https://omarchy.org)
+- [Omarchy](https://omarchy.org) (or any Linux desktop with a system tray)
 - Python 3
 - `python-gobject`
 - `libayatana-appindicator3`
@@ -33,63 +31,66 @@ sudo pacman -S python-gobject libayatana-appindicator wireguard-tools
 ## Setup
 
 **1. Clone the repo**
+
 ```bash
-git clone https://github.com/yourusername/omarchy-vpn
-cd omarchy-vpn
+git clone https://github.com/remigius-labs/Omarchy-vpn.git
+cd Omarchy-vpn
 ```
 
 **2. Add your WireGuard configs**
 
 Drop `.conf` files into the `configs/` folder:
+
 ```
 configs/
-  proton-us-01.conf
-  mullvad-us-nyc.conf
-  home-server.conf
+  wg-nl-93.conf    → shows as "NL"
+  wg-us-42.conf    → shows as "US"
+  wg-gr-07.conf    → shows as "GR"
 ```
 
-The filename becomes the display name — `proton-us-01.conf` shows as "Proton Us 01".
+The `wg` prefix and trailing numbers are stripped automatically. You can add or remove configs at any time — the menu picks up changes within a few seconds.
 
-**3. Allow `wg` and `wg-quick` without a password prompt**
+**3. Allow passwordless sudo for WireGuard commands**
 
 ```bash
 sudo visudo
 ```
 
 Add (replace `yourusername`):
+
 ```
 yourusername ALL=(ALL) NOPASSWD: /usr/bin/wg, /usr/bin/wg-quick, /usr/bin/ip
 ```
 
 **4. Run it**
+
 ```bash
 python3 omarchy-vpn.py &
 ```
 
-To start it with Omarchy, add it to your autostart.
+To start it with Omarchy, add it to your Hyprland autostart.
 
 ## Usage
 
 Click the tray icon to open the menu:
 
-- **Server list** — click any server to connect. Active server is marked ✓
-- **Fastest server** — pings all your servers, connects to the one with the lowest latency
-- **Auto-connect** — on/off toggle. When on, reconnects to your last used server on startup
+- **Server list** — click any server to connect. The active server is marked with ✓ (or ⚠ if stale)
+- **Auto-connect** — toggle on while connected to pin the current server. On next startup, it reconnects automatically
 - **Disconnect** — tears down the active tunnel
-- **Open configs folder** — opens your `configs/` directory to add/remove configs
+- **Open configs folder** — opens `configs/` so you can add or remove servers
 
-## How it detects connection status
+## Connection status
 
-Every 3 seconds it runs `sudo wg show` to check the active tunnel:
+The app polls `sudo wg show` every 3 seconds:
 
 | Status | Meaning | Icon |
-|--------|---------|------|
+|---|---|---|
 | Connected | Tunnel up, recent handshake (< 3 min) | Full shield |
-| Stale | Tunnel up but no recent handshake | Empty shield |
-| No network | Tunnel up but server endpoint unreachable | Empty shield |
+| Stale | Tunnel up, no recent handshake | Empty shield |
+| No network | Tunnel up, server unreachable | Empty shield |
 | Disconnected | No active tunnel | Empty shield |
 
-## Waybar tray setup
+## Waybar
 
 Make sure your Waybar config includes the tray module:
 
