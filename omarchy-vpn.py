@@ -11,7 +11,7 @@ from pathlib import Path
 import gi
 gi.require_version('Gtk', '3.0')
 gi.require_version('AppIndicator3', '0.1')
-from gi.repository import Gtk, AppIndicator3, GLib
+from gi.repository import Gtk, AppIndicator3, GLib  # noqa: E402
 
 CONFIG_DIR = Path(__file__).parent / "configs"
 PREFS_FILE = Path(__file__).parent / "prefs.json"
@@ -67,10 +67,12 @@ def can_reach_endpoint(endpoint):
     try:
         host = endpoint[1:endpoint.rindex(']')] if endpoint.startswith('[') else endpoint.rsplit(':', 1)[0]
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.settimeout(1)
-        sock.connect((host, 1))
-        sock.close()
-        return True
+        try:
+            sock.settimeout(1)
+            sock.connect((host, 1))
+            return True
+        finally:
+            sock.close()
     except Exception:
         return False
 
@@ -230,9 +232,12 @@ class OmarchyVPN:
         for c in get_configs():
             run(["sudo", "wg-quick", "down", str(c)], 5)
         run(["sudo", "ip", "link", "delete", conf.stem], 5)
-        run(["sudo", "wg-quick", "up", str(conf)], 30)
-        self.prefs["last_server"] = conf.stem
-        save_prefs(self.prefs)
+        ok, _, stderr = run(["sudo", "wg-quick", "up", str(conf)], 30)
+        if ok:
+            self.prefs["last_server"] = conf.stem
+            save_prefs(self.prefs)
+        else:
+            GLib.idle_add(lambda: self.notify("VPN Error", f"Failed to connect to {display_name(conf.stem)}"))
         GLib.idle_add(self._update_and_rebuild)
 
     def build_menu(self):
