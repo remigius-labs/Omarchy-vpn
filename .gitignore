@@ -1,2 +1,3 @@
 configs/*.conf
 prefs.json
+__pycache__/
