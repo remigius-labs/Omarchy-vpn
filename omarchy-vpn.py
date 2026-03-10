@@ -268,8 +268,8 @@ class OmarchyVPN:
             menu.append(item)
 
         if not configs:
-            empty = Gtk.MenuItem(label="No configs found")
-            empty.set_sensitive(False)
+            empty = Gtk.MenuItem(label=f"Add .conf files to {CONFIG_DIR}")
+            empty.connect("activate", lambda _: subprocess.Popen(["xdg-open", str(CONFIG_DIR)], start_new_session=True))
             menu.append(empty)
 
         menu.append(Gtk.SeparatorMenuItem())
