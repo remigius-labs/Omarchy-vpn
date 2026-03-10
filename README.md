@@ -4,12 +4,12 @@ A WireGuard VPN tray icon built for [Omarchy](https://omarchy.org).
 
 Drop your WireGuard configs into the `configs/` folder and manage connections from the system tray. Tested with ProtonVPN — should work with any WireGuard provider (Mullvad, self-hosted, etc.).
 
-Click a server to connect, switch between them on the fly. Turn on auto-connect to automatically reconnect to your pinned server on startup. The tray icon updates in real time — full shield when connected, empty when not — with desktop notifications on state changes.
+Click a server to connect, switch between them on the fly. On startup, it automatically reconnects to your last used server. The tray icon updates in real time — full shield when connected, empty when not — with desktop notifications on state changes.
 
 ## Features
 
 - **Click to connect** — pick a server from the menu, switch anytime
-- **Auto-connect** — pin a server and reconnect to it automatically on startup
+- **Auto-connect** — automatically reconnects to your last used server on startup
 - **Live status** — icon and tooltip update every 3 seconds without flickering
 - **Desktop notifications** — get notified on connect, disconnect, and connection drops
 - **Smart detection** — distinguishes between connected, stale, no-network, and disconnected states
@@ -75,7 +75,6 @@ To start it with Omarchy, add it to your Hyprland autostart.
 Click the tray icon to open the menu:
 
 - **Server list** — click any server to connect. The active server is marked with ✓ (or ⚠ if stale)
-- **Auto-connect** — toggle on while connected to pin the current server. On next startup, it reconnects automatically
 - **Disconnect** — tears down the active tunnel
 - **Open configs folder** — opens `configs/` so you can add or remove servers
 
