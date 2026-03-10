@@ -29,10 +29,15 @@ def load_prefs():
 
 
 def save_prefs(prefs):
-    PREFS_FILE.write_text(json.dumps(prefs))
+    try:
+        PREFS_FILE.write_text(json.dumps(prefs))
+    except Exception:
+        pass
 
 
 def get_configs():
+    if not CONFIG_DIR.is_dir():
+        return []
     return sorted(CONFIG_DIR.glob("*.conf"))
 
 
@@ -309,8 +314,13 @@ class OmarchyVPN:
 
     def on_disconnect(self, _):
         def do():
+            failed = []
             for c in get_configs():
-                run(["sudo", "wg-quick", "down", str(c)], 5)
+                ok, _, _ = run(["sudo", "wg-quick", "down", str(c)], 5)
+                if not ok:
+                    failed.append(c.stem)
+            if failed:
+                GLib.idle_add(lambda: self.notify("VPN Warning", f"Failed to disconnect: {', '.join(failed)}"))
             GLib.idle_add(self._update_and_rebuild)
         threading.Thread(target=do, daemon=True).start()
 
