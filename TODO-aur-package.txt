@@ -1,0 +1,62 @@
+Publish omarchy-vpn to AUR
+=========================
+
+Context: Script currently uses paths relative to itself (Path(__file__).parent),
+which breaks when installed to /usr/bin/. Need to fix paths and create packaging files.
+
+Files to modify/create
+----------------------
+
+1. MODIFY omarchy-vpn.py — XDG config paths
+   Add "import os" to imports. Replace lines 16-17:
+
+   Before:
+     CONFIG_DIR = Path(__file__).parent / "configs"
+     PREFS_FILE = Path(__file__).parent / "prefs.json"
+
+   After:
+     _XDG_CONFIG = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
+     APP_DIR = _XDG_CONFIG / "omarchy-vpn"
+     CONFIG_DIR = APP_DIR / "configs"
+     PREFS_FILE = APP_DIR / "prefs.json"
+     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+
+2. CREATE LICENSE
+   Standard MIT license, copyright remigius-labs.
+
+3. CREATE omarchy-vpn.desktop
+   [Desktop Entry]
+   Type=Application
+   Name=Omarchy VPN
+   Comment=WireGuard VPN tray icon
+   Exec=omarchy-vpn
+   Icon=security-high-symbolic
+   NoDisplay=true
+   Categories=Network;
+
+4. CREATE PKGBUILD
+   - pkgname=omarchy-vpn-git, arch=('any'), license=('MIT')
+   - depends: python, python-gobject, libayatana-appindicator, wireguard-tools
+   - optdepends: libnotify (for notify-send)
+   - pkgver() uses git rev-list count + short hash
+   - package() installs script to /usr/bin/omarchy-vpn (755),
+     .desktop to /usr/share/applications/, LICENSE to /usr/share/licenses/
+   - No build step, no .install file
+
+5. UPDATE README.md
+   - Add AUR install option: yay -S omarchy-vpn-git
+   - Update config path refs from configs/ to ~/.config/omarchy-vpn/configs/
+   - Keep manual clone-and-run as alternative
+
+Not included (intentionally)
+----------------------------
+- No systemd service — tray app, started by window manager
+- No migration script — users just: cp configs/*.conf ~/.config/omarchy-vpn/configs/
+- No custom icon — uses standard GTK security-*-symbolic icons
+
+Verification
+------------
+1. Run modified script locally — confirm it creates ~/.config/omarchy-vpn/configs/
+2. Test PKGBUILD: makepkg -si in the repo directory
+3. After install, run omarchy-vpn from terminal — confirm tray icon appears
+4. Drop a .conf into ~/.config/omarchy-vpn/configs/, confirm it appears in menu

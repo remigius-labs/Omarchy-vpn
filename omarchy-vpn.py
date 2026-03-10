@@ -168,12 +168,11 @@ class OmarchyVPN:
         self.build_menu()
         GLib.timeout_add_seconds(3, self.refresh)
 
-        if self.prefs.get("auto_connect_enabled"):
-            pinned = self.prefs.get("auto_connect")
-            if pinned:
-                conf = CONFIG_DIR / f"{pinned}.conf"
-                if conf.exists():
-                    threading.Thread(target=self._connect, args=(conf,), daemon=True).start()
+        last = self.prefs.get("last_server")
+        if last:
+            conf = CONFIG_DIR / f"{last}.conf"
+            if conf.exists():
+                threading.Thread(target=self._connect, args=(conf,), daemon=True).start()
 
     def notify(self, title, body):
         try:
@@ -243,15 +242,6 @@ class OmarchyVPN:
         configs = get_configs()
         is_up = state in ('connected', 'stale')
 
-        # Auto-connect toggle (top)
-        auto_on = self.prefs.get("auto_connect_enabled", False)
-        auto_item = Gtk.CheckMenuItem(label="Auto-connect")
-        auto_item.set_active(auto_on)
-        if not is_up and not auto_on:
-            auto_item.set_sensitive(False)
-        auto_item.connect("toggled", self.on_toggle_auto)
-        menu.append(auto_item)
-
         # Disconnect
         disc = Gtk.MenuItem(label="Disconnect")
         disc.connect("activate", self.on_disconnect)
@@ -260,12 +250,10 @@ class OmarchyVPN:
         menu.append(Gtk.SeparatorMenuItem())
 
         # Config list — clicking active server disconnects
-        pinned = self.prefs.get("auto_connect")
         for conf in configs:
             active = is_up and iface == conf.stem
             mark = ("✓ " if state == 'connected' else "⚠ ") if active else ""
-            suffix = " - Autoconnect" if auto_on and pinned == conf.stem else ""
-            item = Gtk.MenuItem(label=f"{mark}{display_name(conf.stem)}{suffix}")
+            item = Gtk.MenuItem(label=f"{mark}{display_name(conf.stem)}")
             item.connect("activate", lambda _, c=conf: self.on_connect(c))
             menu.append(item)
 
@@ -320,13 +308,6 @@ class OmarchyVPN:
                 run(["sudo", "wg-quick", "down", str(c)], 5)
             GLib.idle_add(self._update_and_rebuild)
         threading.Thread(target=do, daemon=True).start()
-
-    def on_toggle_auto(self, item):
-        self.prefs["auto_connect_enabled"] = item.get_active()
-        if item.get_active() and self.iface:
-            self.prefs["auto_connect"] = self.iface
-        save_prefs(self.prefs)
-        self.build_menu()
 
 
 if __name__ == "__main__":
