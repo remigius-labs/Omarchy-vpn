@@ -6,6 +6,12 @@ Drop your WireGuard configs into the `configs/` folder and manage connections fr
 
 Click a server to connect, switch between them on the fly. On startup, it automatically reconnects to your last used server. The tray icon updates in real time — full shield when connected, empty when not — with desktop notifications on state changes.
 
+## Screenshots
+
+![Menu](screenshots/menu.png)
+![VPN Connected](screenshots/connected.png)
+![Connection lost](screenshots/connectionlost.png)
+
 ## Features
 
 - **Click to connect** — pick a server from the menu, switch anytime
