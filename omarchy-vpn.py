@@ -169,6 +169,7 @@ class OmarchyVPN:
         self.iface = None
         self._config_stems = set()
         self._disconnect_timer = None
+        self._switching = False
         self.prefs = load_prefs()
 
         self._update_status()
@@ -201,20 +202,10 @@ class OmarchyVPN:
 
         # Notifications on state change
         if self.last_state is not None and state != self.last_state:
-            if state == 'connected':
-                if self._disconnect_timer:
-                    GLib.source_remove(self._disconnect_timer)
-                    self._disconnect_timer = None
-                self.notify("VPN Connected", display_name(iface))
-            elif state in ('no-network', 'stale'):
-                if self._disconnect_timer:
-                    GLib.source_remove(self._disconnect_timer)
-                    self._disconnect_timer = None
+            if state in ('no-network', 'stale'):
                 self.notify("VPN Down", "Connection lost")
-            elif state == 'disconnected':
-                if not self._disconnect_timer:
-                    self._disconnect_timer = GLib.timeout_add_seconds(
-                        10, self._fire_disconnect_notify)
+            elif state == 'disconnected' and not self._switching:
+                self.notify("VPN Disconnected", "\u00a0")
         self.last_state = state
 
         # Icon
@@ -234,13 +225,21 @@ class OmarchyVPN:
         return changed
 
     def _connect(self, conf):
-        for c in get_configs():
-            run(["sudo", "wg-quick", "down", str(c)], 5)
+        _, active = get_status()
+        switching = active is not None and active != conf.stem
+        self._switching = True
+        if active:
+            run(["sudo", "wg-quick", "down", str(CONFIG_DIR / f"{active}.conf")], 5)
         run(["sudo", "ip", "link", "delete", conf.stem], 5)
         ok, _, stderr = run(["sudo", "wg-quick", "up", str(conf)], 30)
+        self._switching = False
         if ok:
             self.prefs["last_server"] = conf.stem
             save_prefs(self.prefs)
+            if switching:
+                GLib.idle_add(lambda: self.notify("VPN Switched", display_name(conf.stem)))
+            else:
+                GLib.idle_add(lambda: self.notify("VPN Connected", display_name(conf.stem)))
         else:
             GLib.idle_add(lambda: self.notify("VPN Error", f"Failed to connect to {display_name(conf.stem)}"))
         GLib.idle_add(self._update_and_rebuild)
@@ -282,11 +281,6 @@ class OmarchyVPN:
         menu.show_all()
         self.indicator.set_menu(menu)
 
-    def _fire_disconnect_notify(self):
-        self._disconnect_timer = None
-        if self.last_state == 'disconnected':
-            self.notify("VPN Disconnected", "")
-        return False  # don't repeat
 
     def _update_and_rebuild(self):
         self._update_status()
@@ -314,13 +308,14 @@ class OmarchyVPN:
 
     def on_disconnect(self, _):
         def do():
-            failed = []
-            for c in get_configs():
-                ok, _, _ = run(["sudo", "wg-quick", "down", str(c)], 5)
-                if not ok:
-                    failed.append(c.stem)
-            if failed:
-                GLib.idle_add(lambda: self.notify("VPN Warning", f"Failed to disconnect: {', '.join(failed)}"))
+            state, iface = get_status()
+            if iface:
+                conf = CONFIG_DIR / f"{iface}.conf"
+                run(["sudo", "wg-quick", "down", str(conf)], 5)
+                # Check if it actually went down
+                new_state, new_iface = get_status()
+                if new_iface == iface:
+                    GLib.idle_add(lambda: self.notify("VPN Warning", f"Failed to disconnect: {iface}"))
             GLib.idle_add(self._update_and_rebuild)
         threading.Thread(target=do, daemon=True).start()
 
