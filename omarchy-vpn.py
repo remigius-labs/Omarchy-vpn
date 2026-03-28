@@ -11,7 +11,7 @@ from pathlib import Path
 import gi
 gi.require_version('Gtk', '3.0')
 gi.require_version('AppIndicator3', '0.1')
-from gi.repository import Gtk, AppIndicator3, GLib  # noqa: E402
+from gi.repository import Gtk, AppIndicator3, GLib, Gio  # noqa: E402
 
 CONFIG_DIR = Path(__file__).parent / "configs"
 PREFS_FILE = Path(__file__).parent / "prefs.json"
@@ -170,6 +170,7 @@ class OmarchyVPN:
         self._config_stems = set()
         self._disconnect_timer = None
         self._switching = False
+        self._startup = True
         self.prefs = load_prefs()
 
         self._update_status()
@@ -181,8 +182,48 @@ class OmarchyVPN:
             conf = CONFIG_DIR / f"{last}.conf"
             if conf.exists():
                 threading.Thread(target=self._connect, args=(conf,), daemon=True).start()
+        else:
+            self._startup = False
+
+        self._watch_resume()
+
+    def _watch_resume(self):
+        """Listen for systemd sleep/resume via D-Bus to reconnect after wake."""
+        try:
+            bus = Gio.bus_get_sync(Gio.BusType.SYSTEM, None)
+            bus.signal_subscribe(
+                "org.freedesktop.login1",
+                "org.freedesktop.login1.Manager",
+                "PrepareForSleep",
+                "/org/freedesktop/login1",
+                None,
+                Gio.DBusSignalFlags.NONE,
+                self._on_prepare_for_sleep,
+            )
+        except Exception:
+            pass
+
+    def _on_prepare_for_sleep(self, conn, sender, path, iface, signal, params):
+        going_to_sleep = params.unpack()[0]
+        if going_to_sleep:
+            return
+        # Waking up — give the network a moment, then reconnect
+        GLib.timeout_add_seconds(2, self._reconnect_after_resume)
+
+    def _reconnect_after_resume(self):
+        state, _ = get_status()
+        if state == 'connected':
+            return False
+        last = self.prefs.get("last_server")
+        if last:
+            conf = CONFIG_DIR / f"{last}.conf"
+            if conf.exists():
+                threading.Thread(target=self._connect, args=(conf,), daemon=True).start()
+        return False
 
     def notify(self, title, body):
+        if self._startup:
+            return
         try:
             subprocess.Popen(
                 ["notify-send", "-a", "omarchy-vpn", title, body],
@@ -199,6 +240,10 @@ class OmarchyVPN:
         self.state = state
         self.iface = iface
         self._config_stems = config_stems
+
+        # Suppress spurious notifications during startup until VPN is up
+        if self._startup and state == 'connected':
+            self._startup = False
 
         # Notifications on state change
         if self.last_state is not None and state != self.last_state:
@@ -241,6 +286,7 @@ class OmarchyVPN:
             else:
                 GLib.idle_add(lambda: self.notify("VPN Connected", display_name(conf.stem)))
         else:
+            self._startup = False
             GLib.idle_add(lambda: self.notify("VPN Error", f"Failed to connect to {display_name(conf.stem)}"))
         GLib.idle_add(self._update_and_rebuild)
 
